@@ -1,1 +1,3 @@
-export const DB_NAME = "auralisDB";
+const DB_NAME = "auralisDB";
+
+module.exports = { DB_NAME };
