@@ -10,6 +10,16 @@ This repository contains the backend for Auralis — a Node.js + Express API tha
 - Database: MongoDB
 - Run (dev): nodemon with dotenv auto-loading
 
+# status code chart (Memu)
+Informational responses (100 – 199)
+Successful responses (200 – 299)
+Redirection messages (300 – 399)
+Client error responses (400 – 499)
+Server error responses (500 – 599)
+
+# github commit messages 
+👉 https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13
+
 ## Table of contents
 
 - [Project overview](#project-overview)
@@ -138,9 +148,3 @@ Code style & linting:
 - Consider adding request validation (Joi or celebrate) and centralized error handling middleware.
 
 
-# status code chart (Memu)
-Informational responses (100 – 199)
-Successful responses (200 – 299)
-Redirection messages (300 – 399)
-Client error responses (400 – 499)
-Server error responses (500 – 599)
