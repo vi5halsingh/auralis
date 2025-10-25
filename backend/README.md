@@ -138,3 +138,9 @@ Code style & linting:
 - Consider adding request validation (Joi or celebrate) and centralized error handling middleware.
 
 
+# status code chart (Memu)
+Informational responses (100 – 199)
+Successful responses (200 – 299)
+Redirection messages (300 – 399)
+Client error responses (400 – 499)
+Server error responses (500 – 599)
