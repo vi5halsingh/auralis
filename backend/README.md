@@ -17,6 +17,8 @@ Redirection messages (300 – 399)
 Client error responses (400 – 499)
 Server error responses (500 – 599)
 
+https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
+
 # github commit messages 
 👉 https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13
 
@@ -30,6 +32,7 @@ Server error responses (500 – 599)
 - [Important files](#important-files)
 - [Scripts](#scripts)
 - [Database](#database)
+- [File uploads (multer + Cloudinary)](#file-uploads-multer--cloudinary)
 - [Contributing](#contributing)
 - [Troubleshooting](#troubleshooting)
 - [Next steps / TODOs](#next-steps--todos)
@@ -127,6 +130,70 @@ Add mongoose models in `src/models` and import them where needed.
 
 ## Contributing
 
+## File uploads (multer + Cloudinary)
+
+We have a small file-upload pipeline implemented using `multer` for temporary disk storage and Cloudinary for permanent storage. The relevant files are in the repository attachments you shared and in `src/`:
+
+- `src/middlewares/multer.middleware.js` — configures `multer` to store uploads in `./public/temp` and preserves the original filename by default.
+- `src/utils/cloudinary.js` — Cloudinary helper that uploads the local file and deletes the temp file afterwards. It uses `cloudinary.v2` and expects Cloudinary env variables.
+- `src/utils/apiError.js` and `src/utils/apiResponse.js` — small utilities used across the project for consistent error and response objects (the Cloudinary helper returns an `ApiError` on failure).
+
+Environment variables (add to your `.env`):
+
+```
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+
+```
+
+Notes and best-practices:
+
+- The multer middleware writes uploaded files to `./public/temp`. Make sure this directory exists and is writable. Example: `mkdir -p public/temp` (Windows: create the folder in Explorer or use PowerShell).
+- The `cloudinary` helper uploads the file and then removes the local temp file via `fs.unlinkSync`. If you change this, ensure temp files are cleaned up to avoid disk growth.
+- The current `multer` configuration uses the original filename (`file.originalname`) which may cause collisions—consider adding a unique prefix (timestamp or UUID) or sanitizing filenames before saving.
+- The Cloudinary helper returns the Cloudinary response (which includes `url`, `secure_url`, `public_id`, etc.). On failure it returns/throws an `ApiError(500, ...)` — your error handler should convert that into an HTTP response.
+
+Example Express route (simple usage):
+
+```js
+// src/routes/uploads.js
+const express = require('express');
+const router = express.Router();
+const upload = require('../middlewares/multer.middleware');
+const { uploadToCloudinary } = require('../utils/cloudinary');
+
+router.post('/file', upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+    // multer exposes file.path (e.g., './public/temp/filename')
+    const localPath = req.file.path;
+
+    const cloudResult = await uploadToCloudinary(localPath);
+
+    // Example response shape — replace with your ApiResponse utility if available
+    return res.status(200).json({ success: true, data: cloudResult });
+  } catch (err) {
+    next(err); // ensure you have an error handler middleware that understands ApiError
+  }
+});
+
+module.exports = router;
+```
+
+Hooks & middleware:
+
+- If you use `asyncHandler` (a wrapper to catch async errors) you can wrap the route handler to avoid try/catch blocks.
+- Add a centralized error-handling middleware (if you don't already have one) to translate `ApiError` instances to clean HTTP responses with proper status codes and JSON body.
+
+Security & production notes:
+
+- Validate uploaded files (MIME type and size) before uploading to Cloudinary. Multer can enforce file-size limits and simple file filters.
+- Use signed or limited uploads in production if exposing direct browser uploads to Cloudinary.
+- Consider streaming uploads directly to Cloudinary or using Cloudinary's signed upload flow to reduce disk IO and latency.
+
+
 - Follow common branch workflow: feature branches off `dev` and PRs to `dev`.
 - Keep functions small and modular; add tests for important logic.
 - Update this README when adding new env vars, scripts, or deployment steps.
@@ -139,12 +206,5 @@ Code style & linting:
 - MongoDB connection fails: ensure `MONGO_URI` is correct and reachable. Check firewall and Atlas IP whitelist.
 - Port already in use: change `PORT` or stop the conflicting process.
 - Unexpected crashes: check logs printed to the console, look at `connectDB()` errors.
-
-## Next steps / TODOs
-
-- Add route files in `src/routes` and corresponding controllers.
-- Add mongoose models under `src/models`.
-- Add tests and CI configuration.
-- Consider adding request validation (Joi or celebrate) and centralized error handling middleware.
 
 

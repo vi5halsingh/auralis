@@ -17,7 +17,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use(cookieParser())
 
-// Routes
+// Routes import
+    const userRoutes = require('./routes/user.routes');
+
+// Routes Middleware
+    app.use('/api/v1/users', userRoutes);
+
 
 
 module.exports = app;
