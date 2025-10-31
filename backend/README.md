@@ -128,71 +128,88 @@ That means `MONGO_URI` should be the server/cluster connection string without th
 
 Add mongoose models in `src/models` and import them where needed.
 
-## API reference
+## API reference (auth)
 
-Below are the primary public endpoints implemented so far. The API base (as mounted in `src/app.js`) is `/api/v1/users`.
+The application currently exposes authentication endpoints under `/api/v1/users` as wired in `src/app.js`.
 
-### Register user
+### Register — Create user
 
-- Method: POST
-- URL: `/api/v1/users/register`
-- Content type: multipart/form-data (file + form fields)
+- URL: POST `/api/v1/users/register`
+- Content-Type: multipart/form-data
 
-Required form fields:
-- `userName` (string)
-- `email` (string)
-- `fullName` (string)
-- `password` (string)
-- `profileImage` (file) — the profile image to be uploaded; handled by `multer` then uploaded to Cloudinary
+Payload (form fields):
+- `email` (string) — required
+- `fullName` (string) — required
+- `password` (string) — required (will be hashed before saving)
+- `profileImage` (file) — optional but recommended (handled by multer)
 
-Example curl (from shell / PowerShell):
+Behavior (implemented in `src/controllers/user.controller.js`):
+- Validates required fields and returns 400 when missing.
+- Uploads `profileImage` to Cloudinary (`src/utils/cloudinary.js`) and deletes the local temp copy.
+- Checks if a user with the same email already exists and returns 409 if so.
+- Creates the user; password is hashed by a pre-save hook in the model.
+- Returns 201 with an `ApiResponse` containing the created user (sensitive fields removed).
 
-```bash
-curl -X POST http://localhost:5000/api/v1/users/register \
-  -F "userName=jdoe" \
-  -F "email=jdoe@example.com" \
-  -F "fullName=John Doe" \
-  -F "password=Secret123" \
-  -F "profileImage=@/absolute/path/to/avatar.jpg"
-```
-
-Example successful response (ApiResponse):
+Example success response (201):
 
 ```json
 {
   "statusCode": 201,
   "message": "User registered successfully",
+  "data": { /* user object without password/refreshToken */ },
+  "success": true
+}
+```
+
+Example error responses:
+- 400 — missing fields
+- 409 — user already exists
+- 500 — internal error (e.g., Cloudinary upload failed)
+
+### Login — Obtain tokens and cookies
+
+- URL: POST `/api/v1/users/login`
+- Content-Type: application/json
+
+Payload (JSON):
+- `email` or `userName` — use either to identify the user
+- `password` — required
+
+Behavior:
+- The controller looks up a user by `email` or `userName`.
+- Verifies password via the model's `isPasswordCorrect` method.
+- On success, it calls `generateAccessAndRefreshToken(userId)` which:
+  - calls `user.generateAccessToken()` and `user.generateRefreshToken()` (model methods),
+  - stores the refresh token into `user.refreshToken = [refreshToken]` and saves the user (so refresh tokens can be tracked/invalidated),
+  - returns both tokens.
+- The controller sets two cookies on the response: `accessToken` and `refreshToken` with options `{ httpOnly: true, secure: true }` and sends an `ApiResponse` including the logged-in user (without password/refreshToken) and the tokens in the JSON body as well.
+
+Example success response (200) + cookies set:
+
+Response headers will include Set-Cookie for `accessToken` and `refreshToken` (httpOnly). The JSON body:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Logged in successfully",
   "data": {
-    "_id": "64f...",
-    "userName": "jdoe",
-    "email": "jdoe@example.com",
-    "fullName": "John Doe",
-    "profileImageUrl": "https://res.cloudinary.com/....jpg",
-    "role": "user",
-    "plan": "free",
-    "createdAt": "2025-10-31T...",
-    "updatedAt": "2025-10-31T..."
+    "loggedInUser": { /* user object without password/refreshToken */ },
+    "refreshToken": "<refresh-token>",
+    "accessToken": "<access-token>"
   },
   "success": true
 }
 ```
 
-Example error response (ApiError):
+Notes & security:
+- Cookies are set with `httpOnly: true` and `secure: true` in the current code — in development (HTTP) you may need `secure: false` to allow the browser to accept cookies.
+- Storing refresh tokens server-side (in the user document) allows revocation of refresh tokens.
+- Make sure `JWT_SECRET` and `REFRESH_TOKEN_SECRET` are strong, stored safely in environment variables, and rotated as needed.
 
-```json
-{
-  "statusCode": 400,
-  "message": "All fields are required",
-  "data": null,
-  "errors": [],
-  "success": false
-}
-```
+If you want, I can also:
+- Add a `logout` endpoint that clears cookies and removes the refresh token from the user's record.
+- Add a `refresh-token` endpoint to exchange refresh tokens for new access tokens and rotate refresh tokens.
 
-Notes:
-- The route uses the `upload.single('profileImage')` multer middleware which stores the incoming file to `./public/temp` by default. The controller then calls the `uploadToCloudinary` helper which uploads to Cloudinary and deletes the local temp file.
-- The controller returns `ApiResponse` on success and `ApiError` on failures — see `src/utils/apiResponse.js` and `src/utils/apiError.js` for the exact response shapes.
-- Consider using `asyncHandler` (provided in `src/utils/asyncHandler.js`) to wrap async route handlers and centralize error handling.
 
 ## Contributing
 
