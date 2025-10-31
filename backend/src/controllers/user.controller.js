@@ -5,14 +5,17 @@ const { userModel} = require('../models/user.model');
 const { ApiError } = require('../utils/apiError');
 const bcryptjs = require('bcryptjs');
 const { asyncHandler } = require('../utils/asyncHandler');
+const jwt = require('jsonwebtoken');
 
 const generateAccessAndRefreshToken =  async (userId) =>{
   // console.log("user",user)
   try {
      const user = await userModel.findById(userId)
-        const accessToken = user.generateAccessToken()
-        const refreshToken = user.generateRefreshToken()
 
+        const accessToken = user.generateAccessToken()
+        if(!accessToken) return null;
+        const refreshToken = user.generateRefreshToken()
+        if(!refreshToken) return null;
         user.refreshToken = [refreshToken]
         await user.save({ validateBeforeSave: false })
 
@@ -111,5 +114,42 @@ const options = {
    .json(new ApiResponse(200 , "Logged in successfully ",{loggedInUser , refreshToken , accessToken} ))
   })
  
+  const reGenerateAccessAndRefreshToken = asyncHandler(
+    async(req, res) =>{
+      // accept referesh token form cookie or body
+      const incomingRefreshToken = req.cookies?.refreshToken || req.body.refreshToken;
+      
+      if(!incomingRefreshToken) {
+        res.status(401).json(new ApiError(401 ,"No token provided !" ))
+      }
+        
+ 
+    try {
+      const decodedRefreshToken = await jwt.verify(incomingRefreshToken , process.env.REFRESH_TOKEN_SECRET)   
 
-module.exports = {registerUser , loginUser};
+ 
+      const user = await userModel.findById(decodedRefreshToken._id).select("-password  -refreshToken")
+      if(!user){
+        return res.status(401).json(new ApiError(401, "Auauthorized user"))
+      }
+
+     const {accessToken , refreshToken} = await generateAccessAndRefreshToken(user._id)
+
+      const options = {
+        httpOnly:true,
+        secure:true
+      }
+
+    return res.status(201)
+     .cookie("accessToken", accessToken , options)
+     .cookie("refreshToken", refreshToken , options)
+     .json( new ApiResponse(201,"Access token refreshed !",data={accessToken , refreshToken}))
+
+       } catch (error) {
+      console.log("error while creating new access token ", error)
+    }
+
+    
+    }
+  )
+module.exports = {registerUser , loginUser , reGenerateAccessAndRefreshToken};

@@ -35,7 +35,8 @@ https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
 - [File uploads (multer + Cloudinary)](#file-uploads-multer--cloudinary)
 - [Contributing](#contributing)
 - [Troubleshooting](#troubleshooting)
-- [Next steps / TODOs](#next-steps--todos)
+- [User register](#Register-user)
+- [User login](#login)
 
 ## Project overview
 
@@ -132,7 +133,9 @@ Add mongoose models in `src/models` and import them where needed.
 
 The application currently exposes authentication endpoints under `/api/v1/users` as wired in `src/app.js`.
 
-### Register — Create user
+## user-authentication
+
+### Register-user
 
 - URL: POST `/api/v1/users/register`
 - Content-Type: multipart/form-data
@@ -166,8 +169,8 @@ Example error responses:
 - 409 — user already exists
 - 500 — internal error (e.g., Cloudinary upload failed)
 
-### Login — Obtain tokens and cookies
-
+### Login 
+- Obtain tokens and cookies 
 - URL: POST `/api/v1/users/login`
 - Content-Type: application/json
 
@@ -208,8 +211,27 @@ Notes & security:
 
 If you want, I can also:
 - Add a `logout` endpoint that clears cookies and removes the refresh token from the user's record.
-- Add a `refresh-token` endpoint to exchange refresh tokens for new access tokens and rotate refresh tokens.
 
+## Refresh token (implemented)
+
+Short update: a refresh-token flow is implemented in `src/controllers/user.controller.js` as `reGenerateAccessAndRefreshToken`.
+
+- It accepts the incoming refresh token from either `req.cookies.refreshToken` or `req.body.refreshToken`.
+- The token is verified with `REFRESH_TOKEN_SECRET`. If valid, the server loads the user and issues a new access token and a new refresh token (token rotation).
+- New tokens are saved to the user's `refreshToken` array (replacing existing tokens) and returned in the response; cookies are also updated (`accessToken` and `refreshToken`, httpOnly).
+- This enables server-side revocation (by clearing the stored refresh tokens) and safer token rotation.
+
+## Auth middleware (compare / verify)
+
+Short update: an authentication middleware is provided at `src/middlewares/auth.middleware.js`.
+
+- The middleware looks for the access token in `req.cookies.accessToken` or the `Authorization` header.
+- It verifies the token using `JWT_SECRET`, fetches the user by ID, and attaches the user object to `req.user` for downstream handlers.
+- If verification fails or the user is not found, it returns a 401 `ApiError`.
+
+Notes:
+- Cookies are set with `{ httpOnly: true, secure: true }` in the current code. For local development over HTTP, set `secure: false` so browsers accept cookies.
+- There are minor naming inconsistencies in some helpers (e.g., `refereshToken` vs `refreshToken`) — consider normalizing to avoid confusion.
 
 ## Contributing
 
