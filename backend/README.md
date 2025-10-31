@@ -128,6 +128,72 @@ That means `MONGO_URI` should be the server/cluster connection string without th
 
 Add mongoose models in `src/models` and import them where needed.
 
+## API reference
+
+Below are the primary public endpoints implemented so far. The API base (as mounted in `src/app.js`) is `/api/v1/users`.
+
+### Register user
+
+- Method: POST
+- URL: `/api/v1/users/register`
+- Content type: multipart/form-data (file + form fields)
+
+Required form fields:
+- `userName` (string)
+- `email` (string)
+- `fullName` (string)
+- `password` (string)
+- `profileImage` (file) — the profile image to be uploaded; handled by `multer` then uploaded to Cloudinary
+
+Example curl (from shell / PowerShell):
+
+```bash
+curl -X POST http://localhost:5000/api/v1/users/register \
+  -F "userName=jdoe" \
+  -F "email=jdoe@example.com" \
+  -F "fullName=John Doe" \
+  -F "password=Secret123" \
+  -F "profileImage=@/absolute/path/to/avatar.jpg"
+```
+
+Example successful response (ApiResponse):
+
+```json
+{
+  "statusCode": 201,
+  "message": "User registered successfully",
+  "data": {
+    "_id": "64f...",
+    "userName": "jdoe",
+    "email": "jdoe@example.com",
+    "fullName": "John Doe",
+    "profileImageUrl": "https://res.cloudinary.com/....jpg",
+    "role": "user",
+    "plan": "free",
+    "createdAt": "2025-10-31T...",
+    "updatedAt": "2025-10-31T..."
+  },
+  "success": true
+}
+```
+
+Example error response (ApiError):
+
+```json
+{
+  "statusCode": 400,
+  "message": "All fields are required",
+  "data": null,
+  "errors": [],
+  "success": false
+}
+```
+
+Notes:
+- The route uses the `upload.single('profileImage')` multer middleware which stores the incoming file to `./public/temp` by default. The controller then calls the `uploadToCloudinary` helper which uploads to Cloudinary and deletes the local temp file.
+- The controller returns `ApiResponse` on success and `ApiError` on failures — see `src/utils/apiResponse.js` and `src/utils/apiError.js` for the exact response shapes.
+- Consider using `asyncHandler` (provided in `src/utils/asyncHandler.js`) to wrap async route handlers and centralize error handling.
+
 ## Contributing
 
 ## File uploads (multer + Cloudinary)
