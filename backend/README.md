@@ -22,6 +22,10 @@ https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
 # github commit messages 
 👉 https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13
 
+
+# ER-Diagram ( eraser ) 
+👉(https://app.eraser.io/workspace/Nu1MB8LiMAPgpz68y3eZ)
+
 ## Table of contents
 
 - [Project overview](#project-overview)
