@@ -10,17 +10,6 @@ This repository contains the backend for Auralis — a Node.js + Express API tha
 - Database: MongoDB
 - Run (dev): nodemon with dotenv auto-loading
 
-# status code chart (Memu)
-Informational responses (100 – 199)
-Successful responses (200 – 299)
-Redirection messages (300 – 399)
-Client error responses (400 – 499)
-Server error responses (500 – 599)
-
-https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
-
-# github commit messages 
-👉 https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13
 
 
 # ER-Diagram ( eraser ) 
@@ -37,9 +26,12 @@ https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
 - [Scripts](#scripts)
 - [Database](#database)
 - [File uploads (multer + Cloudinary)](#file-uploads-multer--cloudinary)
+- [User register](#Register-user)
+- [User login](#login)
+- [User Details Management](#user-details-management)
 - [Contributing](#contributing)
-- [Troubleshooting](#troubleshooting)
-- [Next steps / TODOs](#next-steps--todos)
+
+
 
 ## Project overview
 
@@ -132,8 +124,6 @@ That means `MONGO_URI` should be the server/cluster connection string without th
 
 Add mongoose models in `src/models` and import them where needed.
 
-## Contributing
-
 ## File uploads (multer + Cloudinary)
 
 We have a small file-upload pipeline implemented using `multer` for temporary disk storage and Cloudinary for permanent storage. The relevant files are in the repository attachments you shared and in `src/`:
@@ -205,10 +195,248 @@ Security & production notes:
 Code style & linting:
 - No linter configured yet. Consider adding ESLint and Prettier for consistent style.
 
-## Troubleshooting
-
-- MongoDB connection fails: ensure `MONGO_URI` is correct and reachable. Check firewall and Atlas IP whitelist.
-- Port already in use: change `PORT` or stop the conflicting process.
-- Unexpected crashes: check logs printed to the console, look at `connectDB()` errors.
 
 
+## API reference (auth)
+
+The application currently exposes authentication endpoints under `/api/v1/users` as wired in `src/app.js`.
+
+## user-authentication
+
+### Register-user
+
+- URL: POST `/api/v1/users/register`
+- Content-Type: multipart/form-data
+
+Payload (form fields):
+- `email` (string) — required
+- `fullName` (string) — required
+- `password` (string) — required (will be hashed before saving)
+- `profileImage` (file) — optional but recommended (handled by multer)
+
+Behavior (implemented in `src/controllers/user.controller.js`):
+- Validates required fields and returns 400 when missing.
+- Uploads `profileImage` to Cloudinary (`src/utils/cloudinary.js`) and deletes the local temp copy.
+- Checks if a user with the same email already exists and returns 409 if so.
+- Creates the user; password is hashed by a pre-save hook in the model.
+- Returns 201 with an `ApiResponse` containing the created user (sensitive fields removed).
+
+Example success response (201):
+
+```json
+{
+  "statusCode": 201,
+  "message": "User registered successfully",
+  "data": { /* user object without password/refreshToken */ },
+  "success": true
+}
+```
+
+Example error responses:
+- 400 — missing fields
+- 409 — user already exists
+- 500 — internal error (e.g., Cloudinary upload failed)
+
+### Login 
+- Obtain tokens and cookies 
+- URL: POST `/api/v1/users/login`
+- Content-Type: application/json
+
+Payload (JSON):
+- `email` or `userName` — use either to identify the user
+- `password` — required
+
+Behavior:
+- The controller looks up a user by `email` or `userName`.
+- Verifies password via the model's `isPasswordCorrect` method.
+- On success, it calls `generateAccessAndRefreshToken(userId)` which:
+  - calls `user.generateAccessToken()` and `user.generateRefreshToken()` (model methods),
+  - stores the refresh token into `user.refreshToken = [refreshToken]` and saves the user (so refresh tokens can be tracked/invalidated),
+  - returns both tokens.
+- The controller sets two cookies on the response: `accessToken` and `refreshToken` with options `{ httpOnly: true, secure: true }` and sends an `ApiResponse` including the logged-in user (without password/refreshToken) and the tokens in the JSON body as well.
+
+Example success response (200) + cookies set:
+
+Response headers will include Set-Cookie for `accessToken` and `refreshToken` (httpOnly). The JSON body:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Logged in successfully",
+  "data": {
+    "loggedInUser": { /* user object without password/refreshToken */ },
+    "refreshToken": "<refresh-token>",
+    "accessToken": "<access-token>"
+  },
+  "success": true
+}
+```
+
+Notes & security:
+- Cookies are set with `httpOnly: true` and `secure: true` in the current code — in development (HTTP) you may need `secure: false` to allow the browser to accept cookies.
+- Storing refresh tokens server-side (in the user document) allows revocation of refresh tokens.
+- Make sure `JWT_SECRET` and `REFRESH_TOKEN_SECRET` are strong, stored safely in environment variables, and rotated as needed.
+
+If you want, I can also:
+- Add a `logout` endpoint that clears cookies and removes the refresh token from the user's record.
+
+## Refresh token (implemented)
+
+Short update: a refresh-token flow is implemented in `src/controllers/user.controller.js` as `reGenerateAccessAndRefreshToken`.
+
+- It accepts the incoming refresh token from either `req.cookies.refreshToken` or `req.body.refreshToken`.
+- The token is verified with `REFRESH_TOKEN_SECRET`. If valid, the server loads the user and issues a new access token and a new refresh token (token rotation).
+- New tokens are saved to the user's `refreshToken` array (replacing existing tokens) and returned in the response; cookies are also updated (`accessToken` and `refreshToken`, httpOnly).
+- This enables server-side revocation (by clearing the stored refresh tokens) and safer token rotation.
+
+## Auth middleware (compare / verify)
+
+Short update: an authentication middleware is provided at `src/middlewares/auth.middleware.js`.
+
+- The middleware looks for the access token in `req.cookies.accessToken` or the `Authorization` header.
+- It verifies the token using `JWT_SECRET`, fetches the user by ID, and attaches the user object to `req.user` for downstream handlers.
+- If verification fails or the user is not found, it returns a 401 `ApiError`.
+
+Notes:
+- Cookies are set with `{ httpOnly: true, secure: true }` in the current code. For local development over HTTP, set `secure: false` so browsers accept cookies.
+- There are minor naming inconsistencies in some helpers (e.g., `refereshToken` vs `refreshToken`) — consider normalizing to avoid confusion.
+
+## User-Details-Management
+
+The application now includes a comprehensive user details management system that extends the basic user authentication. This system handles user physical details, demographics, and location information.
+
+### Database Schema
+
+**UserDetails Model** (`src/models/userDetails.model.js`):
+- `userId` (ObjectId, ref: 'User') - One-to-one relationship with User table
+- `bodyDetails` (embedded object):
+  - `height` (Number) - User height
+  - `weight` (Number) - User weight  
+  - `age` (Number) - User age
+- `dateOfBirth` (Date) - User's date of birth
+- `gender` (String, enum) - Values: 'male', 'female', 'other', 'prefer_not_to_say'
+- `location` (embedded object):
+  - `city` (String) - City name
+  - `state` (String) - State/Province name
+  - `country` (String) - Country name
+- `isProfileComplete` (Boolean) - Profile completion status
+- `timestamps` - Automatic createdAt and updatedAt fields
+
+### API Endpoints
+
+All user details endpoints are protected and require authentication. Base URL: `/api/v1/user-details`
+
+#### Create User Details
+- **URL**: POST `/api/v1/user-details/create`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Content-Type**: application/json
+- **Body**:
+```json
+{
+  "bodyDetails": {
+    "height": 175,
+    "weight": 70,
+    "age": 25
+  },
+  "dateOfBirth": "1998-01-01",
+  "gender": "male",
+  "location": {
+    "city": "New York",
+    "state": "NY",
+    "country": "USA"
+  }
+}
+```
+- **Response**: 201 Created with user details object
+- **Error Codes**: 
+  - 401: User not authenticated
+  - 409: User details already exist
+  - 500: Server error during creation
+
+#### Get User Details
+- **URL**: GET `/api/v1/user-details/me`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Response**: 200 OK with user details including joined user information
+- **Features**: Uses MongoDB aggregation pipeline to join with User table for complete profile data
+
+#### Update User Details
+- **URL**: PATCH `/api/v1/user-details/update`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Content-Type**: application/json
+- **Body**: Any combination of fields to update
+```json
+{
+  "bodyDetails": {
+    "weight": 72
+  },
+  "location": {
+    "city": "Los Angeles"
+  }
+}
+```
+- **Response**: 200 OK with updated user details
+- **Features**: Partial updates supported, only provided fields are updated
+
+#### Delete User Details
+- **URL**: DELETE `/api/v1/user-details/delete`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Response**: 200 OK with success message
+- **Behavior**: Permanently deletes user details document
+
+#### Get All User Details (Admin/Analytics)
+- **URL**: GET `/api/v1/user-details/all?page=1&limit=10&search=keyword`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Query Parameters**:
+  - `page` (number): Page number for pagination
+  - `limit` (number): Items per page
+  - `search` (string): Optional search keyword
+- **Response**: 200 OK with paginated user details list
+- **Features**: 
+  - Pagination support
+  - Search functionality across location fields
+  - User details joined with user information
+
+### Implementation Features
+
+1. **Data Validation**: All fields validated with Mongoose schema validators
+2. **Aggregation Pipeline**: Used for efficient data retrieval with user information joins
+3. **Error Handling**: Consistent error responses using ApiError utility
+4. **Authentication**: All endpoints protected with authenticatUser middleware
+5. **Partial Updates**: PATCH method supports selective field updates
+6. **Data Integrity**: Unique constraint on userId ensures one-to-one relationship
+7. **Indexing**: Optimized queries with proper MongoDB indexes
+
+### Business Logic
+
+- Each user can have only one details document (enforced by unique userId index)
+- Profile completion status tracked via `isProfileComplete` field
+- Location data structured for easy querying and analytics
+- Body details stored as embedded document for efficient access
+- Automatic timestamp management for audit trails
+
+### Code Architecture
+
+**Controller Pattern**: Follows the same asyncHandler wrapper pattern as user authentication
+**Response Format**: Consistent ApiResponse format across all endpoints  
+**Error Handling**: Centralized error handling with appropriate HTTP status codes
+**Database Operations**: Optimized queries with proper indexing and aggregation pipelines
+**Security**: All endpoints require valid JWT authentication token
+
+### Integration Notes
+
+- User details are automatically linked to the authenticated user via req.user._id
+- No manual userId specification required in request bodies
+- Consistent with existing user authentication patterns and response formats
+- Ready for future extensions like profile completion tracking, analytics, etc.
+
+## Contributing
+  ## status code chart (Memu)
+Informational responses (100 – 199)
+Successful responses (200 – 299)
+Redirection messages (300 – 399)
+Client error responses (400 – 499)
+Server error responses (500 – 599)
+more : https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
+
+  ## github commit messages 
+👉 https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13

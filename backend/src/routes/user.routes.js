@@ -1,18 +1,25 @@
 const express = require('express')
-const { route } = require('../app')
 const  upload  = require('../middlewares/multer.middleware.js');
-const { registerUser } = require('../controllers/user.controller.js');
+const { registerUser, loginUser, reGenerateAccessAndRefreshToken , logoutUser } = require('../controllers/user.controller.js');
+const { authenticatUser } = require('../middlewares/auth.middleware.js');
 const router = express.Router()
-// router.get('/', asyncHandler (async (req,res)=>{
-//     res.status(200).json(new ApiResponse("User route is working fine",null , 200))
-// }));
 
 router.route('/register').post(
-    upload.fields([
-        { name: 'image1', maxCount: 1 },
-        { name: 'image2', maxCount: 1 }
-    ]),
+    upload.single('profileImage'),
     registerUser
 );
+router.route('/login').post(
+    loginUser
+);
 
+// protected routes 
+router.route('/refresh/token').post(
+    authenticatUser,
+     reGenerateAccessAndRefreshToken
+);
+
+router.route('/logout').post(
+    authenticatUser,
+    logoutUser
+)
 module.exports = router
