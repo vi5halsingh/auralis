@@ -66,7 +66,6 @@ const registerUser = asyncHandler(
 }
 )
 
-
 const loginUser = asyncHandler(
   async (req, res) =>{
 
@@ -152,4 +151,40 @@ const options = {
     
     }
   )
-module.exports = {registerUser , loginUser , reGenerateAccessAndRefreshToken};
+
+  const logoutUser = asyncHandler(
+    async(req, res) =>{
+      
+      const userId = req.user?._id;
+      
+      if(!userId) {
+        return res.status(401).json(new ApiError(401, "User not authenticated"))
+      }
+
+      try {
+        
+        await userModel.findByIdAndUpdate(
+          userId,
+          { $set: { refreshToken: [] } },
+          { new: true }
+        )
+
+        const options = {
+          httpOnly: true,
+          secure: true
+        }
+
+        return res.status(200)
+          .clearCookie("accessToken", options)
+          .clearCookie("refreshToken", options)
+          .json(new ApiResponse(200, "User logged out successfully"))
+
+      } catch (error) {
+        console.log("Error during logout:", error)
+        return res.status(500).json(new ApiError(500, "Something went wrong while logging out"))
+      }
+    }
+  )
+
+  
+module.exports = {registerUser , loginUser , reGenerateAccessAndRefreshToken, logoutUser};

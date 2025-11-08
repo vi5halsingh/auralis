@@ -10,17 +10,6 @@ This repository contains the backend for Auralis — a Node.js + Express API tha
 - Database: MongoDB
 - Run (dev): nodemon with dotenv auto-loading
 
-# status code chart (Memu)
-Informational responses (100 – 199)
-Successful responses (200 – 299)
-Redirection messages (300 – 399)
-Client error responses (400 – 499)
-Server error responses (500 – 599)
-
-https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
-
-# github commit messages 
-👉 https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13
 
 ## Table of contents
 
@@ -33,10 +22,12 @@ https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
 - [Scripts](#scripts)
 - [Database](#database)
 - [File uploads (multer + Cloudinary)](#file-uploads-multer--cloudinary)
-- [Contributing](#contributing)
-- [Troubleshooting](#troubleshooting)
 - [User register](#Register-user)
 - [User login](#login)
+- [User Details Management](#user-details-management)
+- [Contributing](#contributing)
+
+
 
 ## Project overview
 
@@ -128,6 +119,79 @@ mongoose.connect(`${process.env.MONGO_URI}/${DB_NAME}`)
 That means `MONGO_URI` should be the server/cluster connection string without the trailing DB name (the DB name is appended from constants). You can change this behavior if you prefer to provide the full connection string.
 
 Add mongoose models in `src/models` and import them where needed.
+
+## File uploads (multer + Cloudinary)
+
+We have a small file-upload pipeline implemented using `multer` for temporary disk storage and Cloudinary for permanent storage. The relevant files are in the repository attachments you shared and in `src/`:
+
+- `src/middlewares/multer.middleware.js` — configures `multer` to store uploads in `./public/temp` and preserves the original filename by default.
+- `src/utils/cloudinary.js` — Cloudinary helper that uploads the local file and deletes the temp file afterwards. It uses `cloudinary.v2` and expects Cloudinary env variables.
+- `src/utils/apiError.js` and `src/utils/apiResponse.js` — small utilities used across the project for consistent error and response objects (the Cloudinary helper returns an `ApiError` on failure).
+
+Environment variables (add to your `.env`):
+
+```
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+
+```
+
+Notes and best-practices:
+
+- The multer middleware writes uploaded files to `./public/temp`. Make sure this directory exists and is writable. Example: `mkdir -p public/temp` (Windows: create the folder in Explorer or use PowerShell).
+- The `cloudinary` helper uploads the file and then removes the local temp file via `fs.unlinkSync`. If you change this, ensure temp files are cleaned up to avoid disk growth.
+- The current `multer` configuration uses the original filename (`file.originalname`) which may cause collisions—consider adding a unique prefix (timestamp or UUID) or sanitizing filenames before saving.
+- The Cloudinary helper returns the Cloudinary response (which includes `url`, `secure_url`, `public_id`, etc.). On failure it returns/throws an `ApiError(500, ...)` — your error handler should convert that into an HTTP response.
+
+Example Express route (simple usage):
+
+```js
+// src/routes/uploads.js
+const express = require('express');
+const router = express.Router();
+const upload = require('../middlewares/multer.middleware');
+const { uploadToCloudinary } = require('../utils/cloudinary');
+
+router.post('/file', upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+    // multer exposes file.path (e.g., './public/temp/filename')
+    const localPath = req.file.path;
+
+    const cloudResult = await uploadToCloudinary(localPath);
+
+    // Example response shape — replace with your ApiResponse utility if available
+    return res.status(200).json({ success: true, data: cloudResult });
+  } catch (err) {
+    next(err); // ensure you have an error handler middleware that understands ApiError
+  }
+});
+
+module.exports = router;
+```
+
+Hooks & middleware:
+
+- If you use `asyncHandler` (a wrapper to catch async errors) you can wrap the route handler to avoid try/catch blocks.
+- Add a centralized error-handling middleware (if you don't already have one) to translate `ApiError` instances to clean HTTP responses with proper status codes and JSON body.
+
+Security & production notes:
+
+- Validate uploaded files (MIME type and size) before uploading to Cloudinary. Multer can enforce file-size limits and simple file filters.
+- Use signed or limited uploads in production if exposing direct browser uploads to Cloudinary.
+- Consider streaming uploads directly to Cloudinary or using Cloudinary's signed upload flow to reduce disk IO and latency.
+
+
+- Follow common branch workflow: feature branches off `dev` and PRs to `dev`.
+- Keep functions small and modular; add tests for important logic.
+- Update this README when adding new env vars, scripts, or deployment steps.
+
+Code style & linting:
+- No linter configured yet. Consider adding ESLint and Prettier for consistent style.
+
+
 
 ## API reference (auth)
 
@@ -233,83 +297,142 @@ Notes:
 - Cookies are set with `{ httpOnly: true, secure: true }` in the current code. For local development over HTTP, set `secure: false` so browsers accept cookies.
 - There are minor naming inconsistencies in some helpers (e.g., `refereshToken` vs `refreshToken`) — consider normalizing to avoid confusion.
 
-## Contributing
+## User-Details-Management
 
-## File uploads (multer + Cloudinary)
+The application now includes a comprehensive user details management system that extends the basic user authentication. This system handles user physical details, demographics, and location information.
 
-We have a small file-upload pipeline implemented using `multer` for temporary disk storage and Cloudinary for permanent storage. The relevant files are in the repository attachments you shared and in `src/`:
+### Database Schema
 
-- `src/middlewares/multer.middleware.js` — configures `multer` to store uploads in `./public/temp` and preserves the original filename by default.
-- `src/utils/cloudinary.js` — Cloudinary helper that uploads the local file and deletes the temp file afterwards. It uses `cloudinary.v2` and expects Cloudinary env variables.
-- `src/utils/apiError.js` and `src/utils/apiResponse.js` — small utilities used across the project for consistent error and response objects (the Cloudinary helper returns an `ApiError` on failure).
+**UserDetails Model** (`src/models/userDetails.model.js`):
+- `userId` (ObjectId, ref: 'User') - One-to-one relationship with User table
+- `bodyDetails` (embedded object):
+  - `height` (Number) - User height
+  - `weight` (Number) - User weight  
+  - `age` (Number) - User age
+- `dateOfBirth` (Date) - User's date of birth
+- `gender` (String, enum) - Values: 'male', 'female', 'other', 'prefer_not_to_say'
+- `location` (embedded object):
+  - `city` (String) - City name
+  - `state` (String) - State/Province name
+  - `country` (String) - Country name
+- `isProfileComplete` (Boolean) - Profile completion status
+- `timestamps` - Automatic createdAt and updatedAt fields
 
-Environment variables (add to your `.env`):
+### API Endpoints
 
-```
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_api_key
-CLOUDINARY_API_SECRET=your_api_secret
+All user details endpoints are protected and require authentication. Base URL: `/api/v1/user-details`
 
-```
-
-Notes and best-practices:
-
-- The multer middleware writes uploaded files to `./public/temp`. Make sure this directory exists and is writable. Example: `mkdir -p public/temp` (Windows: create the folder in Explorer or use PowerShell).
-- The `cloudinary` helper uploads the file and then removes the local temp file via `fs.unlinkSync`. If you change this, ensure temp files are cleaned up to avoid disk growth.
-- The current `multer` configuration uses the original filename (`file.originalname`) which may cause collisions—consider adding a unique prefix (timestamp or UUID) or sanitizing filenames before saving.
-- The Cloudinary helper returns the Cloudinary response (which includes `url`, `secure_url`, `public_id`, etc.). On failure it returns/throws an `ApiError(500, ...)` — your error handler should convert that into an HTTP response.
-
-Example Express route (simple usage):
-
-```js
-// src/routes/uploads.js
-const express = require('express');
-const router = express.Router();
-const upload = require('../middlewares/multer.middleware');
-const { uploadToCloudinary } = require('../utils/cloudinary');
-
-router.post('/file', upload.single('file'), async (req, res, next) => {
-  try {
-    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
-
-    // multer exposes file.path (e.g., './public/temp/filename')
-    const localPath = req.file.path;
-
-    const cloudResult = await uploadToCloudinary(localPath);
-
-    // Example response shape — replace with your ApiResponse utility if available
-    return res.status(200).json({ success: true, data: cloudResult });
-  } catch (err) {
-    next(err); // ensure you have an error handler middleware that understands ApiError
+#### Create User Details
+- **URL**: POST `/api/v1/user-details/create`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Content-Type**: application/json
+- **Body**:
+```json
+{
+  "bodyDetails": {
+    "height": 175,
+    "weight": 70,
+    "age": 25
+  },
+  "dateOfBirth": "1998-01-01",
+  "gender": "male",
+  "location": {
+    "city": "New York",
+    "state": "NY",
+    "country": "USA"
   }
-});
-
-module.exports = router;
+}
 ```
+- **Response**: 201 Created with user details object
+- **Error Codes**: 
+  - 401: User not authenticated
+  - 409: User details already exist
+  - 500: Server error during creation
 
-Hooks & middleware:
+#### Get User Details
+- **URL**: GET `/api/v1/user-details/me`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Response**: 200 OK with user details including joined user information
+- **Features**: Uses MongoDB aggregation pipeline to join with User table for complete profile data
 
-- If you use `asyncHandler` (a wrapper to catch async errors) you can wrap the route handler to avoid try/catch blocks.
-- Add a centralized error-handling middleware (if you don't already have one) to translate `ApiError` instances to clean HTTP responses with proper status codes and JSON body.
+#### Update User Details
+- **URL**: PATCH `/api/v1/user-details/update`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Content-Type**: application/json
+- **Body**: Any combination of fields to update
+```json
+{
+  "bodyDetails": {
+    "weight": 72
+  },
+  "location": {
+    "city": "Los Angeles"
+  }
+}
+```
+- **Response**: 200 OK with updated user details
+- **Features**: Partial updates supported, only provided fields are updated
 
-Security & production notes:
+#### Delete User Details
+- **URL**: DELETE `/api/v1/user-details/delete`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Response**: 200 OK with success message
+- **Behavior**: Permanently deletes user details document
 
-- Validate uploaded files (MIME type and size) before uploading to Cloudinary. Multer can enforce file-size limits and simple file filters.
-- Use signed or limited uploads in production if exposing direct browser uploads to Cloudinary.
-- Consider streaming uploads directly to Cloudinary or using Cloudinary's signed upload flow to reduce disk IO and latency.
+#### Get All User Details (Admin/Analytics)
+- **URL**: GET `/api/v1/user-details/all?page=1&limit=10&search=keyword`
+- **Headers**: Authorization: Bearer `<accessToken>`
+- **Query Parameters**:
+  - `page` (number): Page number for pagination
+  - `limit` (number): Items per page
+  - `search` (string): Optional search keyword
+- **Response**: 200 OK with paginated user details list
+- **Features**: 
+  - Pagination support
+  - Search functionality across location fields
+  - User details joined with user information
 
+### Implementation Features
 
-- Follow common branch workflow: feature branches off `dev` and PRs to `dev`.
-- Keep functions small and modular; add tests for important logic.
-- Update this README when adding new env vars, scripts, or deployment steps.
+1. **Data Validation**: All fields validated with Mongoose schema validators
+2. **Aggregation Pipeline**: Used for efficient data retrieval with user information joins
+3. **Error Handling**: Consistent error responses using ApiError utility
+4. **Authentication**: All endpoints protected with authenticatUser middleware
+5. **Partial Updates**: PATCH method supports selective field updates
+6. **Data Integrity**: Unique constraint on userId ensures one-to-one relationship
+7. **Indexing**: Optimized queries with proper MongoDB indexes
 
-Code style & linting:
-- No linter configured yet. Consider adding ESLint and Prettier for consistent style.
+### Business Logic
 
-## Troubleshooting
+- Each user can have only one details document (enforced by unique userId index)
+- Profile completion status tracked via `isProfileComplete` field
+- Location data structured for easy querying and analytics
+- Body details stored as embedded document for efficient access
+- Automatic timestamp management for audit trails
 
-- MongoDB connection fails: ensure `MONGO_URI` is correct and reachable. Check firewall and Atlas IP whitelist.
-- Port already in use: change `PORT` or stop the conflicting process.
-- Unexpected crashes: check logs printed to the console, look at `connectDB()` errors.
+### Code Architecture
 
+**Controller Pattern**: Follows the same asyncHandler wrapper pattern as user authentication
+**Response Format**: Consistent ApiResponse format across all endpoints  
+**Error Handling**: Centralized error handling with appropriate HTTP status codes
+**Database Operations**: Optimized queries with proper indexing and aggregation pipelines
+**Security**: All endpoints require valid JWT authentication token
 
+### Integration Notes
+
+- User details are automatically linked to the authenticated user via req.user._id
+- No manual userId specification required in request bodies
+- Consistent with existing user authentication patterns and response formats
+- Ready for future extensions like profile completion tracking, analytics, etc.
+
+## Contributing
+  ## status code chart (Memu)
+Informational responses (100 – 199)
+Successful responses (200 – 299)
+Redirection messages (300 – 399)
+Client error responses (400 – 499)
+Server error responses (500 – 599)
+more : https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status
+
+  ## github commit messages 
+👉 https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13

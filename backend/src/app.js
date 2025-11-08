@@ -19,9 +19,11 @@ app.use(cookieParser())
 
 // Routes import
     const userRoutes = require('./routes/user.routes');
+    const userDetailsRoutes = require('./routes/userDetails.routes');
 
 // Routes Middleware
     app.use('/api/v1/users', userRoutes);
+    app.use('/api/v1/user-details', userDetailsRoutes);
 
 
 
